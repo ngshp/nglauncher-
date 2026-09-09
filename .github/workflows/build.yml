@@ -83,7 +83,7 @@ jobs:
       run: choco install innosetup -y --no-progress
       shell: pwsh
 
-    - name: Compile Installer (Final Fix)
+    - name: Compile Installer (PowerShell Native)
       run: |
         # 1. Cari path ISCC.exe
         $isccExe = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
@@ -93,41 +93,31 @@ jobs:
         
         Write-Host "Using ISCC at: $isccExe"
         
-        # 2. Validasi file .iss menggunakan path absolut
+        # 2. Validasi file .iss
         $scriptPath = Join-Path $PWD $env:INSTALLER_SCRIPT
-        Write-Host "Checking for script at: $scriptPath"
-        
         if (-not (Test-Path $scriptPath)) {
-            Write-Host "=== ROOT DIRECTORY CONTENTS ==="
-            Get-ChildItem -Force
             throw "FATAL: Installer script NOT FOUND at: $scriptPath"
         }
         
-        # 3. Siapkan folder output dan source
+        # 3. Siapkan folder
         $sourceFolder = (Resolve-Path $env:PUBLISH_OUTPUT_DIR).Path
         $outputDir = Join-Path $PWD "InstallerOutput"
         New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
         
         Write-Host "🔨 Compiling installer..."
-        Write-Host "   Script       : $scriptPath"
-        Write-Host "   Source Folder: $sourceFolder"
-        Write-Host "   Output Dir   : $outputDir"
+        Write-Host "   Script : $scriptPath"
+        Write-Host "   Source : $sourceFolder"
+        Write-Host "   Output : $outputDir"
         
-        # 4. Jalankan ISCC dengan parameter yang sangat eksplisit
-        $args = @(
-            "`"$scriptPath`"", 
-            "/O`"$outputDir`"", 
-            "/DSourceFolder=`"$sourceFolder`""
-        )
+        # 4. Jalankan ISCC menggunakan string command langsung (lebih stabil untuk CLI tool lama)
+        $command = "& `"$isccExe`" `"$scriptPath`" /O`"$outputDir`" /DSourceFolder=`"$sourceFolder`""
+        Write-Host "Executing: $command"
         
-        Write-Host "Command: & $isccExe $args"
-        $output = & $isccExe @args 2>&1
-        Write-Host $output
+        Invoke-Expression $command
+        $exitCode = $LASTEXITCODE
         
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "=== INNO SETUP ERROR LOG ==="
-            $output | Select-String -Pattern "error|warning|fatal|line" -Context 0,2
-            throw "❌ Inno Setup compilation failed with exit code $LASTEXITCODE"
+        if ($exitCode -ne 0) {
+            throw "❌ Inno Setup compilation failed with exit code $exitCode"
         }
         
         Write-Host "✅ Installer compiled successfully!"
