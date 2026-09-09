@@ -1,0 +1,9 @@
+<linker>
+  <assembly fullname="System.Management" preserve="all" />
+  <assembly fullname="H.NotifyIcon.Wpf" preserve="all" />
+  <!-- Preserve semua type di namespace Services karena berisi native calls -->
+  <assembly fullname="NgpbLauncher">
+    <type fullname="NgpbLauncher.Services.*" preserve="all" />
+    <type fullname="NgpbLauncher.Program" preserve="all" />
+  </assembly>
+</linker>
