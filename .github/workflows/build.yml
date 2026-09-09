@@ -1,0 +1,180 @@
+name: NGPB Launcher Build & Sign
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  PROJECT_PATH: 'src/NgpbLauncher.csproj'
+  INSTALLER_SCRIPT: 'installer/ngpb-installer.iss'
+  PUBLISH_OUTPUT_DIR: './build-output'
+
+jobs:
+  build-and-package:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Debug Directory Structure
+      run: |
+        Write-Host "=== Root Directory ==="
+        Get-ChildItem -Recurse -Filter *.sln | Select-Object FullName
+        if (Test-Path src) { Get-ChildItem src } else { Write-Host "src folder not found" }
+      shell: pwsh
+        
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+        
+    - name: Restore Dependencies
+      run: dotnet restore ${{ env.PROJECT_PATH }}
+      
+    - name: Build Release (Auto-Detect Exe Name)
+      run: |
+        # Bersihkan output folder lama
+        if (Test-Path $env:PUBLISH_OUTPUT_DIR) { 
+          Remove-Item -Recurse -Force $env:PUBLISH_OUTPUT_DIR -ErrorAction SilentlyContinue
+        }
+        New-Item -ItemType Directory -Force -Path $env:PUBLISH_OUTPUT_DIR | Out-Null
+        
+        # Tahap 1: Publish normal TANPA SingleFile
+        $tempOutput = Join-Path $PWD "temp-publish"
+        if (Test-Path $tempOutput) { Remove-Item -Recurse -Force $tempOutput -ErrorAction SilentlyContinue }
+        
+        Write-Host "🔨 Stage 1: Publishing without SingleFile..."
+        dotnet publish $env:PROJECT_PATH `
+          -c Release `
+          -r win-x64 `
+          --self-contained true `
+          -p:PublishTrimmed=true `
+          -p:DebugType=none `
+          -p:Optimize=true `
+          -o $tempOutput
+          
+        if ($LASTEXITCODE -ne 0) {
+            throw "❌ Stage 1 publish failed with exit code $LASTEXITCODE"
+        }
+        
+        # Tahap 2: DETEKSI NAMA EXE SECARA OTOMATIS
+        Write-Host "🔍 Detecting executable name in temp-publish..."
+        $exeFiles = Get-ChildItem $tempOutput -Filter *.exe -File
+        
+        if ($exeFiles.Count -eq 0) {
+            Write-Host "=== Files in temp-publish ==="
+            Get-ChildItem $tempOutput | Select-Object Name, Length
+            throw "FATAL: No .exe files found in temp-publish folder!"
+        }
+        
+        # Ambil file exe utama (biasanya hanya ada 1)
+        $sourceExe = $exeFiles[0].FullName
+        $exeName = $exeFiles[0].Name
+        
+        Write-Host "✅ Detected executable: $exeName"
+        
+        $destExe = Join-Path $env:PUBLISH_OUTPUT_DIR $exeName
+        Copy-Item -Path $sourceExe -Destination $destExe -Force
+        
+        # Hapus folder sementara
+        Remove-Item -Recurse -Force $tempOutput -ErrorAction SilentlyContinue
+        
+        Write-Host "✅ Build completed successfully."
+        Write-Host "   Output: $destExe"
+        Get-Item $destExe | Select-Object Name, Length, LastWriteTime
+        
+        # SIMPAN NAMA EXE KE ENVIRONMENT VARIABLE UNTUK STEP SELANJUTNYA
+        echo "DETECTED_EXE_NAME=$exeName" >> $env:GITHUB_ENV
+      shell: pwsh
+      
+    - name: Verify Build Output
+      run: |
+        Write-Host "Checking build output for: ${{ env.DETECTED_EXE_NAME }}"
+        Get-ChildItem $env:PUBLISH_OUTPUT_DIR | Select-Object Name, Length
+        if (-not (Test-Path "$env:PUBLISH_OUTPUT_DIR/${{ env.DETECTED_EXE_NAME }}")) {
+          throw "FATAL: ${{ env.DETECTED_EXE_NAME }} NOT FOUND in build output!"
+        }
+        Write-Host "✅ Build verified successfully."
+      shell: pwsh
+      
+    - name: Prepare Signing Certificate
+      env:
+        SIGNING_CERT_B64: ${{ secrets.SIGNING_CERT_B64 }}
+        CERT_PATH: '${{ runner.temp }}/ngpb-cert.pfx'
+      run: |
+        $certBytes = [Convert]::FromBase64String($env:SIGNING_CERT_B64)
+        [IO.File]::WriteAllBytes($env:CERT_PATH, $certBytes)
+        Write-Host "Certificate prepared at $env:CERT_PATH"
+      shell: pwsh
+        
+    - name: Code Sign Launcher
+      env:
+        CERT_PATH: '${{ runner.temp }}/ngpb-cert.pfx'
+        SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+      run: |
+        signtool sign /f $env:CERT_PATH /p $env:SIGNING_PASSWORD `
+          /tr http://timestamp.digicert.com /td sha256 /fd sha256 /v `
+          "$env:PUBLISH_OUTPUT_DIR\${{ env.DETECTED_EXE_NAME }}"
+          
+    - name: Compile Installer
+      run: |
+        $isccPaths = @(
+            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+            "C:\Program Files\Inno Setup 6\ISCC.exe"
+        )
+        
+        $isccExe = $null
+        foreach ($path in $isccPaths) {
+            if (Test-Path $path) {
+                $isccExe = $path
+                break
+            }
+        }
+        
+        if (-not $isccExe) {
+            throw "Inno Setup compiler (ISCC.exe) not found on this runner!"
+        }
+        
+        $sourceFolder = (Resolve-Path $env:PUBLISH_OUTPUT_DIR).Path
+        $outputDir = Join-Path $PWD "InstallerOutput"
+        New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+        
+        Write-Host "🔨 Compiling installer..."
+        Write-Host "   Source Folder : $sourceFolder"
+        Write-Host "   Output Folder : $outputDir"
+        
+        & $isccExe $env:INSTALLER_SCRIPT "/O$outputDir" "/DSourceFolder=$sourceFolder"
+        
+        if ($LASTEXITCODE -ne 0) {
+            throw "❌ Inno Setup compilation failed with exit code $LASTEXITCODE"
+        }
+        
+        Write-Host "✅ Installer compiled successfully!"
+        Get-ChildItem $outputDir -Filter *.exe | Select-Object Name, Length
+      shell: pwsh
+        
+    - name: Code Sign Installer
+      env:
+        CERT_PATH: '${{ runner.temp }}/ngpb-cert.pfx'
+        SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+      run: |
+        $installerFiles = Get-ChildItem .\InstallerOutput\*.exe
+        if ($installerFiles.Count -eq 0) {
+            throw "No installer .exe files found in InstallerOutput!"
+        }
+        
+        $installerFiles | ForEach-Object {
+            Write-Host "Signing: $($_.FullName)"
+            signtool sign /f $env:CERT_PATH /p $env:SIGNING_PASSWORD `
+              /tr http://timestamp.digicert.com /td sha256 /fd sha256 /v $_.FullName
+        }
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: NGPB-Launcher-v1.2.0
+        path: |
+          ${{ env.PUBLISH_OUTPUT_DIR }}/${{ env.DETECTED_EXE_NAME }}
+          ./InstallerOutput/*.exe
