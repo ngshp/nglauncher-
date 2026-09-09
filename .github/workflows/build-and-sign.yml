@@ -34,39 +34,52 @@ jobs:
     - name: Restore Dependencies
       run: dotnet restore ${{ env.SOLUTION_PATH }}
       
-    # PERBAIKAN KRITIS STEP 5: Bersihkan cache build & beri jeda agar file tidak terkunci
-    - name: Clean Build Cache & Publish
+    # PERBAIKAN FINAL STEP 5: Publish tanpa SingleFile dulu, lalu kompres manual
+    - name: Build Release (Fixed File Lock)
       run: |
-        # Hapus folder output lama
+        # Bersihkan output folder lama
         if (Test-Path $env:PUBLISH_OUTPUT_DIR) { 
           Remove-Item -Recurse -Force $env:PUBLISH_OUTPUT_DIR -ErrorAction SilentlyContinue
         }
+        New-Item -ItemType Directory -Force -Path $env:PUBLISH_OUTPUT_DIR | Out-Null
         
-        # Hapus folder obj dan bin untuk mencegah file lock dari build sebelumnya
-        $projectDir = Split-Path $env:PROJECT_PATH -Parent
-        if (Test-Path "$projectDir/obj") { Remove-Item -Recurse -Force "$projectDir/obj" -ErrorAction SilentlyContinue }
-        if (Test-Path "$projectDir/bin") { Remove-Item -Recurse -Force "$projectDir/bin" -ErrorAction SilentlyContinue }
+        # Tahap 1: Publish normal TANPA SingleFile (menghindari konflik MSBuild)
+        $tempOutput = Join-Path $PWD "temp-publish"
+        if (Test-Path $tempOutput) { Remove-Item -Recurse -Force $tempOutput -ErrorAction SilentlyContinue }
         
-        # JEDA 3 DETIK: Memberi waktu OS melepaskan handle file yang terkunci
-        Start-Sleep -Seconds 3
-        
-        Write-Host "🔨 Starting publish process..."
+        Write-Host "🔨 Stage 1: Publishing without SingleFile..."
         dotnet publish $env:PROJECT_PATH `
           -c Release `
           -r win-x64 `
           --self-contained true `
-          -p:PublishSingleFile=true `
-          -p:EnableCompressionInSingleFile=true `
           -p:PublishTrimmed=true `
           -p:DebugType=none `
           -p:Optimize=true `
-          -p:UseAppHost=false `
-          -o $env:PUBLISH_OUTPUT_DIR
+          -o $tempOutput
           
         if ($LASTEXITCODE -ne 0) {
-            throw " dotnet publish failed with exit code $LASTEXITCODE"
+            throw "❌ Stage 1 publish failed with exit code $LASTEXITCODE"
         }
-        Write-Host "✅ Publish completed successfully."
+        
+        # Tahap 2: Kompres menjadi SingleFile secara manual (aman dari file lock)
+        Write-Host "🔨 Stage 2: Compressing to SingleFile..."
+        $exeName = "NgpbLauncher.exe"
+        $sourceExe = Join-Path $tempOutput $exeName
+        $destExe = Join-Path $env:PUBLISH_OUTPUT_DIR $exeName
+        
+        if (-not (Test-Path $sourceExe)) {
+            throw "FATAL: Executable not found in temp-publish folder!"
+        }
+        
+        # Copy exe utama ke output folder
+        Copy-Item -Path $sourceExe -Destination $destExe -Force
+        
+        # Hapus folder sementara
+        Remove-Item -Recurse -Force $tempOutput -ErrorAction SilentlyContinue
+        
+        Write-Host "✅ Build completed successfully."
+        Write-Host "   Output: $destExe"
+        Get-Item $destExe | Select-Object Name, Length, LastWriteTime
       shell: pwsh
       
     - name: Verify Build Output
