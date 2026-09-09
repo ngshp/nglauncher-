@@ -34,13 +34,24 @@ jobs:
     - name: Restore Dependencies
       run: dotnet restore ${{ env.SOLUTION_PATH }}
       
-    - name: Build Release
+    # PERBAIKAN KRITIS STEP 5: Bersihkan cache build & beri jeda agar file tidak terkunci
+    - name: Clean Build Cache & Publish
       run: |
+        # Hapus folder output lama
         if (Test-Path $env:PUBLISH_OUTPUT_DIR) { 
-          Remove-Item -Recurse -Force $env:PUBLISH_OUTPUT_DIR 
+          Remove-Item -Recurse -Force $env:PUBLISH_OUTPUT_DIR -ErrorAction SilentlyContinue
         }
         
-        dotnet publish ${{ env.PROJECT_PATH }} `
+        # Hapus folder obj dan bin untuk mencegah file lock dari build sebelumnya
+        $projectDir = Split-Path $env:PROJECT_PATH -Parent
+        if (Test-Path "$projectDir/obj") { Remove-Item -Recurse -Force "$projectDir/obj" -ErrorAction SilentlyContinue }
+        if (Test-Path "$projectDir/bin") { Remove-Item -Recurse -Force "$projectDir/bin" -ErrorAction SilentlyContinue }
+        
+        # JEDA 3 DETIK: Memberi waktu OS melepaskan handle file yang terkunci
+        Start-Sleep -Seconds 3
+        
+        Write-Host "🔨 Starting publish process..."
+        dotnet publish $env:PROJECT_PATH `
           -c Release `
           -r win-x64 `
           --self-contained true `
@@ -51,6 +62,11 @@ jobs:
           -p:Optimize=true `
           -p:UseAppHost=false `
           -o $env:PUBLISH_OUTPUT_DIR
+          
+        if ($LASTEXITCODE -ne 0) {
+            throw " dotnet publish failed with exit code $LASTEXITCODE"
+        }
+        Write-Host "✅ Publish completed successfully."
       shell: pwsh
       
     - name: Verify Build Output
@@ -82,10 +98,8 @@ jobs:
           /tr http://timestamp.digicert.com /td sha256 /fd sha256 /v `
           "$env:PUBLISH_OUTPUT_DIR\NgpbLauncher.exe"
           
-    # PERBAIKAN KRITIS: Gunakan ISCC.exe native via PowerShell agar variabel terbaca
     - name: Compile Installer
       run: |
-        # Cari lokasi ISCC.exe di runner GitHub Actions
         $isccPaths = @(
             "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
             "C:\Program Files\Inno Setup 6\ISCC.exe"
@@ -103,7 +117,6 @@ jobs:
             throw "Inno Setup compiler (ISCC.exe) not found on this runner!"
         }
         
-        # Resolve path absolut untuk menghindari error path relatif
         $sourceFolder = (Resolve-Path $env:PUBLISH_OUTPUT_DIR).Path
         $outputDir = Join-Path $PWD "InstallerOutput"
         New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
@@ -111,7 +124,6 @@ jobs:
         Write-Host "🔨 Compiling installer..."
         Write-Host "   Source Folder : $sourceFolder"
         Write-Host "   Output Folder : $outputDir"
-        Write-Host "   Script File   : $env:INSTALLER_SCRIPT"
         
         & $isccExe $env:INSTALLER_SCRIPT "/O$outputDir" "/DSourceFolder=$sourceFolder"
         
