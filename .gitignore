@@ -1,0 +1,19 @@
+## Build output
+bin/
+obj/
+publish/
+build-output/
+temp-publish/
+InstallerOutput/
+
+## Visual Studio / VS Code
+.vs/
+.vscode/
+*.user
+*.suo
+*.cache
+
+## OS Files
+.DS_Store
+Thumbs.db
+desktop.ini
