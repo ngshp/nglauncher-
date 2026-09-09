@@ -1,55 +1,33 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
-    <!-- Tipe Output: WinExe agar bisa jalan di Windows -->
     <OutputType>WinExe</OutputType>
-    
-    <!-- Target Framework: .NET 8 untuk Windows -->
     <TargetFramework>net8.0-windows</TargetFramework>
-    
-    <!-- Mengaktifkan WPF (Windows Presentation Foundation) -->
     <UseWPF>true</UseWPF>
-    
-    <!-- Nama Aplikasi dan Versi -->
     <AssemblyName>NgpbLauncher</AssemblyName>
     <Version>1.2.0</Version>
     <Company>Next Generation Point Blank</Company>
     <Product>NGPB Launcher Enterprise</Product>
-    
-    <!-- Icon Aplikasi -->
-    <ApplicationIcon>Assets\ngpb_launcher.ico</ApplicationIcon>
-    
-    <!-- Entry Point (Titik Awal Program Jalan) -->
     <StartupObject>NgpbLauncher.Program</StartupObject>
-    
-    <!-- Optimasi untuk Ukuran Kecil & Performa Tinggi -->
-    <PublishTrimmed>true</PublishTrimmed>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <DebugType>none</DebugType>
     <Optimize>true</Optimize>
     <Deterministic>true</Deterministic>
-    
-    <!-- Mencegah Warning saat Build -->
     <NoWarn>$(NoWarn);CS8604;CS8602;CS8618</NoWarn>
+    
+    <!-- MATIKAN DI CSPROJ, AKTIFKAN VIA CLI DI WORKFLOW -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Package NuGet Wajib -->
-    <!-- H.NotifyIcon.Wpf: Untuk icon di system tray (taskbar kanan bawah) -->
     <PackageReference Include="H.NotifyIcon.Wpf" Version="2.4.1" />
-    
-    <!-- System.Management: Untuk mengambil info Hardware (CPU, Motherboard) -->
     <PackageReference Include="System.Management" Version="8.0.0" />
-    
-    <!-- System.Text.Json: Untuk baca manifest update JSON -->
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Memastikan file Assets ikut ter-copy ke folder output saat build -->
-    <None Update="Assets\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <Page Include="**\*.xaml" SubType="Designer" Generator="MSBuild:Compile" Exclude="bin\**;obj\**" />
+    <None Remove="Assets\**\*" />
+    <Resource Include="Assets\**\*" Condition="Exists('Assets\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <ApplicationDefinition Include="App.xaml" />
   </ItemGroup>
-
 </Project>
