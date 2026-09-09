@@ -5,48 +5,37 @@ using NgpbLauncher.Views;
 
 namespace NgpbLauncher
 {
-    /// <summary>
-    /// Entry Point Aplikasi NGPB Launcher
-    /// Bertanggung jawab atas inisialisasi keamanan sebelum UI dimuat.
-    /// </summary>
     public static class Program
     {
         [STAThread]
-        // WAJIB tambahkan string[] args agar kompatibel dengan PublishTrimmed + SelfContained
+        // ⚠️ WAJIB ADA PARAMETER string[] args UNTUK TRIMMING + SELF-CONTAINED
         public static void Main(string[] args) 
         {
             try
             {
-                // LAYER 0: Native Protection (Anti-Debug & DEP)
+                // LAYER 0: Native Protection
+                // Jika trimming gagal karena ini, kita butuh trimmer config khusus
                 NativeProtection.ApplyNativeProtections();
 
-                // Cek Status Ban Permanen (HWID & IP)
                 if (SecurityBootManager.IsPermanentlyBanned())
                 {
                     MessageBox.Show(
                         "⛔ PERMANENTLY BANNED ⛔\n\n" +
-                        "Hardware ID dan IP Address Anda telah diblokir secara permanen dari NGPB.\n" +
-                        "Tidak ada banding yang dapat diterima.",
+                        "Hardware ID dan IP Address Anda telah diblokir secara permanen.",
                         "NGPB - SECURITY ALERT", 
                         MessageBoxButton.OK, 
                         MessageBoxImage.Stop);
-                    
                     Environment.Exit(1);
                 }
 
-                // Inisialisasi Aplikasi WPF dengan App.xaml
-                // Menggunakan App() memastikan resource dictionary & global handlers terbaca
-                var app = new App(); 
-                app.InitializeComponent(); 
-                
-                // Menjalankan SecureBootWindow sebagai jendela pertama
+                var app = new App();
+                app.InitializeComponent();
                 app.Run(new SecureBootWindow());
             }
             catch (Exception ex)
             {
-                // Handle error kritis saat startup
                 MessageBox.Show(
-                    $"FATAL ERROR: {ex.Message}\n\nLauncher tidak dapat memulai sistem keamanan.",
+                    $"FATAL ERROR: {ex.Message}",
                     "NGPB - CRITICAL FAILURE",
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
