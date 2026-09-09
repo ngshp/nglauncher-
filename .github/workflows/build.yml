@@ -39,7 +39,6 @@ jobs:
         
         Write-Host "🔨 Publishing WITHOUT trimming for stability..."
         
-        # HAPUS -p:PublishTrimmed=true DAN flag trimming lainnya
         dotnet publish $env:PROJECT_PATH `
           -c Release `
           -r win-x64 `
@@ -101,23 +100,23 @@ jobs:
           /tr http://timestamp.digicert.com /td sha256 /fd sha256 /v `
           "$env:PUBLISH_OUTPUT_DIR\${{ env.DETECTED_EXE_NAME }}"
           
+    - name: Install Inno Setup
+      run: |
+        choco install innosetup -y --no-progress
+        Write-Host "Inno Setup installed successfully."
+      shell: pwsh
+
     - name: Compile Installer
       run: |
-        $isccPaths = @(
-            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-            "C:\Program Files\Inno Setup 6\ISCC.exe"
-        )
+        # Path ISCC setelah install via Chocolatey
+        $isccExe = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
         
-        $isccExe = $null
-        foreach ($path in $isccPaths) {
-            if (Test-Path $path) {
-                $isccExe = $path
-                break
-            }
+        if (-not (Test-Path $isccExe)) {
+            $isccExe = Get-ChildItem "C:\Program Files*\Inno Setup *\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
         }
         
         if (-not $isccExe) {
-            throw "Inno Setup compiler (ISCC.exe) not found on this runner!"
+            throw "FATAL: ISCC.exe still not found after installation!"
         }
         
         $sourceFolder = (Resolve-Path $env:PUBLISH_OUTPUT_DIR).Path
@@ -127,6 +126,7 @@ jobs:
         Write-Host "🔨 Compiling installer..."
         Write-Host "   Source Folder : $sourceFolder"
         Write-Host "   Output Folder : $outputDir"
+        Write-Host "   Using ISCC    : $isccExe"
         
         & $isccExe $env:INSTALLER_SCRIPT "/O$outputDir" "/DSourceFolder=$sourceFolder"
         
