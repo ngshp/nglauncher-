@@ -26,7 +26,7 @@ jobs:
     - name: Restore Dependencies
       run: dotnet restore ${{ env.PROJECT_PATH }}
       
-    - name: Build Release (With Trimmer Config)
+    - name: Build Release (Stable No-Trim)
       run: |
         # Bersihkan output folder lama
         if (Test-Path $env:PUBLISH_OUTPUT_DIR) { 
@@ -37,27 +37,21 @@ jobs:
         $tempOutput = Join-Path $PWD "temp-publish"
         if (Test-Path $tempOutput) { Remove-Item -Recurse -Force $tempOutput -ErrorAction SilentlyContinue }
         
-        Write-Host "🔨 Publishing with custom trimmer config..."
+        Write-Host "🔨 Publishing WITHOUT trimming for stability..."
         
+        # HAPUS -p:PublishTrimmed=true DAN flag trimming lainnya
         dotnet publish $env:PROJECT_PATH `
           -c Release `
           -r win-x64 `
           --self-contained true `
           --no-incremental `
-          -p:PublishTrimmed=true `
           -p:DebugType=none `
           -p:Optimize=true `
           -p:EnableCompressionInSingleFile=false `
-          -p:TrimmerSingleWarn=false `
-          -p:TrimMode=link `
-          -p:SuppressTrimAnalysisWarnings=true `
-          -v detailed `
-          -o $tempOutput 2>&1 | Tee-Object -Variable publishOutput
+          -o $tempOutput
           
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "=== FULL PUBLISH OUTPUT ==="
-            $publishOutput | Select-String -Pattern "error|warning|fail" -Context 0,2
-            throw "❌ Publish failed! Check full output above."
+            throw "❌ Publish failed with exit code $LASTEXITCODE"
         }
         
         # Deteksi exe otomatis
