@@ -10,7 +10,6 @@ env:
   SOLUTION_PATH: 'nglauncher.sln' 
   PROJECT_PATH: 'src/NgpbLauncher.csproj'
   INSTALLER_SCRIPT: 'installer/ngpb-installer.iss'
-  # PERBAIKAN: Gunakan nama folder output yang unik agar tidak konflik dengan file exe
   PUBLISH_OUTPUT_DIR: './build-output'
 
 jobs:
@@ -24,7 +23,6 @@ jobs:
       run: |
         Write-Host "=== Root Directory ==="
         Get-ChildItem -Recurse -Filter *.sln | Select-Object FullName
-        Write-Host "=== Src Directory ==="
         if (Test-Path src) { Get-ChildItem src } else { Write-Host "src folder not found" }
       shell: pwsh
         
@@ -38,7 +36,6 @@ jobs:
       
     - name: Build Release
       run: |
-        # Bersihkan folder output lama untuk mencegah file lock
         if (Test-Path $env:PUBLISH_OUTPUT_DIR) { 
           Remove-Item -Recurse -Force $env:PUBLISH_OUTPUT_DIR 
         }
@@ -74,6 +71,7 @@ jobs:
         $certBytes = [Convert]::FromBase64String($env:SIGNING_CERT_B64)
         [IO.File]::WriteAllBytes($env:CERT_PATH, $certBytes)
         Write-Host "Certificate prepared at $env:CERT_PATH"
+      shell: pwsh
         
     - name: Code Sign Launcher
       env:
@@ -84,20 +82,61 @@ jobs:
           /tr http://timestamp.digicert.com /td sha256 /fd sha256 /v `
           "$env:PUBLISH_OUTPUT_DIR\NgpbLauncher.exe"
           
+    # PERBAIKAN KRITIS: Gunakan ISCC.exe native via PowerShell agar variabel terbaca
     - name: Compile Installer
-      uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
-      with:
-        path: ${{ env.INSTALLER_SCRIPT }}
-        options: "/O.\InstallerOutput /DSourceFolder=$env:PUBLISH_OUTPUT_DIR"
+      run: |
+        # Cari lokasi ISCC.exe di runner GitHub Actions
+        $isccPaths = @(
+            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+            "C:\Program Files\Inno Setup 6\ISCC.exe"
+        )
+        
+        $isccExe = $null
+        foreach ($path in $isccPaths) {
+            if (Test-Path $path) {
+                $isccExe = $path
+                break
+            }
+        }
+        
+        if (-not $isccExe) {
+            throw "Inno Setup compiler (ISCC.exe) not found on this runner!"
+        }
+        
+        # Resolve path absolut untuk menghindari error path relatif
+        $sourceFolder = (Resolve-Path $env:PUBLISH_OUTPUT_DIR).Path
+        $outputDir = Join-Path $PWD "InstallerOutput"
+        New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+        
+        Write-Host "🔨 Compiling installer..."
+        Write-Host "   Source Folder : $sourceFolder"
+        Write-Host "   Output Folder : $outputDir"
+        Write-Host "   Script File   : $env:INSTALLER_SCRIPT"
+        
+        & $isccExe $env:INSTALLER_SCRIPT "/O$outputDir" "/DSourceFolder=$sourceFolder"
+        
+        if ($LASTEXITCODE -ne 0) {
+            throw "❌ Inno Setup compilation failed with exit code $LASTEXITCODE"
+        }
+        
+        Write-Host "✅ Installer compiled successfully!"
+        Get-ChildItem $outputDir -Filter *.exe | Select-Object Name, Length
+      shell: pwsh
         
     - name: Code Sign Installer
       env:
         CERT_PATH: '${{ runner.temp }}/ngpb-cert.pfx'
         SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
       run: |
-        Get-ChildItem .\InstallerOutput\*.exe | ForEach-Object {
-          signtool sign /f $env:CERT_PATH /p $env:SIGNING_PASSWORD `
-            /tr http://timestamp.digicert.com /td sha256 /fd sha256 /v $_.FullName
+        $installerFiles = Get-ChildItem .\InstallerOutput\*.exe
+        if ($installerFiles.Count -eq 0) {
+            throw "No installer .exe files found in InstallerOutput!"
+        }
+        
+        $installerFiles | ForEach-Object {
+            Write-Host "Signing: $($_.FullName)"
+            signtool sign /f $env:CERT_PATH /p $env:SIGNING_PASSWORD `
+              /tr http://timestamp.digicert.com /td sha256 /fd sha256 /v $_.FullName
         }
 
     - name: Upload Artifacts
