@@ -7,7 +7,8 @@ on:
 
 env:
   DOTNET_VERSION: '8.0.x'
-  SOLUTION_PATH: 'NgpbLauncher.sln'
+  # PERBAIKAN: Sesuaikan dengan nama file .sln yang sebenarnya di repo Anda
+  SOLUTION_PATH: 'nglauncher.sln' 
   PROJECT_PATH: 'src/NgpbLauncher.csproj'
   INSTALLER_SCRIPT: 'installer/ngpb-installer.iss'
 
@@ -18,6 +19,15 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    # LANGKAH DIAGNOSTIK BARU: Cek isi folder sebelum build
+    - name: Debug Directory Structure
+      run: |
+        Write-Host "=== Root Directory ==="
+        Get-ChildItem -Recurse -Filter *.sln | Select-Object FullName
+        Write-Host "=== Src Directory ==="
+        if (Test-Path src) { Get-ChildItem src } else { Write-Host "src folder not found" }
+      shell: pwsh
+        
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
@@ -28,9 +38,9 @@ jobs:
       
     - name: Build Release
       run: |
-        dotnet publish ${{ env.PROJECT_PATH }} -c Release -r win-x64 --self-contained true \
-          -p:PublishTrimmed=true -p:EnableCompressionInSingleFile=true \
-          -p:DebugType=none -p:Optimize=true -p:PublishSingleFile=true \
+        dotnet publish ${{ env.PROJECT_PATH }} -c Release -r win-x64 --self-contained true `
+          -p:PublishTrimmed=true -p:EnableCompressionInSingleFile=true `
+          -p:DebugType=none -p:Optimize=true -p:PublishSingleFile=true `
           -o ./publish
       
     - name: Prepare Signing Certificate
