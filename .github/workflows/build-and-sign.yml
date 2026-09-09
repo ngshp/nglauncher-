@@ -1,0 +1,76 @@
+name: NGPB Launcher Build & Sign
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  SOLUTION_PATH: 'NgpbLauncher.sln'
+  PROJECT_PATH: 'src/NgpbLauncher.csproj'
+  INSTALLER_SCRIPT: 'installer/ngpb-installer.iss'
+
+jobs:
+  build-and-package:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+        
+    - name: Restore Dependencies
+      run: dotnet restore ${{ env.SOLUTION_PATH }}
+      
+    - name: Build Release
+      run: |
+        dotnet publish ${{ env.PROJECT_PATH }} -c Release -r win-x64 --self-contained true \
+          -p:PublishTrimmed=true -p:EnableCompressionInSingleFile=true \
+          -p:DebugType=none -p:Optimize=true -p:PublishSingleFile=true \
+          -o ./publish
+      
+    - name: Prepare Signing Certificate
+      env:
+        SIGNING_CERT_B64: ${{ secrets.SIGNING_CERT_B64 }}
+        CERT_PATH: '${{ runner.temp }}/ngpb-cert.pfx'
+      run: |
+        $certBytes = [Convert]::FromBase64String($env:SIGNING_CERT_B64)
+        [IO.File]::WriteAllBytes($env:CERT_PATH, $certBytes)
+        Write-Host "Certificate prepared at $env:CERT_PATH"
+        
+    - name: Code Sign Launcher
+      env:
+        CERT_PATH: '${{ runner.temp }}/ngpb-cert.pfx'
+        SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+      run: |
+        signtool sign /f $env:CERT_PATH /p $env:SIGNING_PASSWORD `
+          /tr http://timestamp.digicert.com /td sha256 /fd sha256 /v `
+          .\publish\NgpbLauncher.exe
+          
+    - name: Compile Installer
+      uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+      with:
+        path: ${{ env.INSTALLER_SCRIPT }}
+        options: '/O.\InstallerOutput /DSourceFolder=publish'
+        
+    - name: Code Sign Installer
+      env:
+        CERT_PATH: '${{ runner.temp }}/ngpb-cert.pfx'
+        SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+      run: |
+        Get-ChildItem .\InstallerOutput\*.exe | ForEach-Object {
+          signtool sign /f $env:CERT_PATH /p $env:SIGNING_PASSWORD `
+            /tr http://timestamp.digicert.com /td sha256 /fd sha256 /v $_.FullName
+        }
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: NGPB-Launcher-v1.2.0
+        path: |
+          ./publish/NgpbLauncher.exe
+          ./InstallerOutput/*.exe
