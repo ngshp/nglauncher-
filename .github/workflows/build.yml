@@ -26,7 +26,7 @@ jobs:
     - name: Restore Dependencies
       run: dotnet restore ${{ env.PROJECT_PATH }}
       
-    - name: Build Release (Verbose Debug)
+    - name: Build Release (With Trimmer Config)
       run: |
         # Bersihkan output folder lama
         if (Test-Path $env:PUBLISH_OUTPUT_DIR) { 
@@ -37,9 +37,8 @@ jobs:
         $tempOutput = Join-Path $PWD "temp-publish"
         if (Test-Path $tempOutput) { Remove-Item -Recurse -Force $tempOutput -ErrorAction SilentlyContinue }
         
-        Write-Host "🔨 Publishing with verbose logging..."
+        Write-Host "🔨 Publishing with custom trimmer config..."
         
-        # Verbose logging + no-incremental untuk menangkap error asli
         dotnet publish $env:PROJECT_PATH `
           -c Release `
           -r win-x64 `
@@ -50,14 +49,15 @@ jobs:
           -p:Optimize=true `
           -p:EnableCompressionInSingleFile=false `
           -p:TrimmerSingleWarn=false `
+          -p:TrimMode=link `
+          -p:SuppressTrimAnalysisWarnings=true `
           -v detailed `
           -o $tempOutput 2>&1 | Tee-Object -Variable publishOutput
           
-        # Tampilkan error spesifik jika gagal
         if ($LASTEXITCODE -ne 0) {
             Write-Host "=== FULL PUBLISH OUTPUT ==="
             $publishOutput | Select-String -Pattern "error|warning|fail" -Context 0,2
-            throw "❌ Publish failed! Check full output above for exact error."
+            throw "❌ Publish failed! Check full output above."
         }
         
         # Deteksi exe otomatis
@@ -65,7 +65,7 @@ jobs:
         if ($exeFiles.Count -eq 0) {
             Write-Host "=== Contents of temp-publish ==="
             Get-ChildItem $tempOutput | Select-Object Name, Length
-            throw "FATAL: No .exe files found after publish!"
+            throw "FATAL: No .exe files found!"
         }
         
         $sourceExe = $exeFiles[0].FullName
@@ -73,7 +73,6 @@ jobs:
         
         Write-Host "✅ Detected executable: $exeName"
         Copy-Item -Path $sourceExe -Destination "$env:PUBLISH_OUTPUT_DIR\$exeName" -Force
-        
         Remove-Item -Recurse -Force $tempOutput -ErrorAction SilentlyContinue
         
         echo "DETECTED_EXE_NAME=$exeName" >> $env:GITHUB_ENV
