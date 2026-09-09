@@ -7,7 +7,6 @@ on:
 
 env:
   DOTNET_VERSION: '8.0.x'
-  # Kita biarkan kosong dulu, nanti diisi oleh script
   PROJECT_PATH: '' 
   INSTALLER_SCRIPT: 'installer/ngpb-installer.iss'
   PUBLISH_OUTPUT_DIR: './build-output'
@@ -84,19 +83,42 @@ jobs:
       run: choco install innosetup -y --no-progress
       shell: pwsh
 
-    - name: Compile Installer
+    - name: Compile Installer (Verbose)
       run: |
+        # Cari path ISCC.exe
         $isccExe = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+        if (-not (Test-Path $isccExe)) {
+            $isccExe = Get-ChildItem "C:\Program Files*\Inno Setup *\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+        }
+        
+        Write-Host "Using ISCC at: $isccExe"
+        
+        # Pastikan file .iss ada
+        if (-not (Test-Path $env:INSTALLER_SCRIPT)) {
+            throw "FATAL: Installer script not found at: $env:INSTALLER_SCRIPT"
+        }
+        
         $sourceFolder = (Resolve-Path $env:PUBLISH_OUTPUT_DIR).Path
         $outputDir = Join-Path $PWD "InstallerOutput"
         New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
         
         Write-Host "🔨 Compiling installer..."
-        & $isccExe $env:INSTALLER_SCRIPT "/O$outputDir" "/DSourceFolder=$sourceFolder"
+        Write-Host "   Script Path : $env:INSTALLER_SCRIPT"
+        Write-Host "   Source Folder: $sourceFolder"
+        Write-Host "   Output Dir   : $outputDir"
+        
+        # Jalankan ISCC dan tangkap outputnya
+        $output = & $isccExe $env:INSTALLER_SCRIPT "/O$outputDir" "/DSourceFolder=$sourceFolder" 2>&1
+        Write-Host $output
         
         if ($LASTEXITCODE -ne 0) {
-            throw "❌ Inno Setup failed!"
+            Write-Host "=== INNO SETUP ERROR LOG ==="
+            $output | Select-String -Pattern "error|warning|fatal" -Context 0,2
+            throw "❌ Inno Setup compilation failed with exit code $LASTEXITCODE"
         }
+        
+        Write-Host "✅ Installer compiled successfully!"
+        Get-ChildItem $outputDir -Filter *.exe | Select-Object Name, Length
       shell: pwsh
         
     - name: Upload Artifacts
