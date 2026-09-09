@@ -18,13 +18,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Debug Directory Structure
-      run: |
-        Write-Host "=== Root Directory ==="
-        Get-ChildItem -Recurse -Filter *.sln | Select-Object FullName
-        if (Test-Path src) { Get-ChildItem src } else { Write-Host "src folder not found" }
-      shell: pwsh
-        
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
@@ -33,7 +26,7 @@ jobs:
     - name: Restore Dependencies
       run: dotnet restore ${{ env.PROJECT_PATH }}
       
-    - name: Build Release (Auto-Detect Exe Name)
+    - name: Build Release (CI-Safe Trimming)
       run: |
         # Bersihkan output folder lama
         if (Test-Path $env:PUBLISH_OUTPUT_DIR) { 
@@ -41,11 +34,11 @@ jobs:
         }
         New-Item -ItemType Directory -Force -Path $env:PUBLISH_OUTPUT_DIR | Out-Null
         
-        # Tahap 1: Publish normal TANPA SingleFile
+        # Publish dengan Trimmed DI-AKTIFKAN via CLI (override csproj)
         $tempOutput = Join-Path $PWD "temp-publish"
         if (Test-Path $tempOutput) { Remove-Item -Recurse -Force $tempOutput -ErrorAction SilentlyContinue }
         
-        Write-Host "🔨 Stage 1: Publishing without SingleFile..."
+        Write-Host "🔨 Publishing with CLI-controlled trimming..."
         dotnet publish $env:PROJECT_PATH `
           -c Release `
           -r win-x64 `
@@ -53,39 +46,30 @@ jobs:
           -p:PublishTrimmed=true `
           -p:DebugType=none `
           -p:Optimize=true `
+          -p:EnableCompressionInSingleFile=false `
           -o $tempOutput
           
         if ($LASTEXITCODE -ne 0) {
-            throw "❌ Stage 1 publish failed with exit code $LASTEXITCODE"
+            throw "❌ Publish failed with exit code $LASTEXITCODE"
         }
         
-        # Tahap 2: DETEKSI NAMA EXE SECARA OTOMATIS
-        Write-Host "🔍 Detecting executable name in temp-publish..."
+        # Deteksi exe otomatis
         $exeFiles = Get-ChildItem $tempOutput -Filter *.exe -File
-        
         if ($exeFiles.Count -eq 0) {
-            Write-Host "=== Files in temp-publish ==="
+            Write-Host "=== Contents of temp-publish ==="
             Get-ChildItem $tempOutput | Select-Object Name, Length
-            throw "FATAL: No .exe files found in temp-publish folder!"
+            throw "FATAL: No .exe files found after publish!"
         }
         
-        # Ambil file exe utama (biasanya hanya ada 1)
         $sourceExe = $exeFiles[0].FullName
         $exeName = $exeFiles[0].Name
         
         Write-Host "✅ Detected executable: $exeName"
+        Copy-Item -Path $sourceExe -Destination "$env:PUBLISH_OUTPUT_DIR\$exeName" -Force
         
-        $destExe = Join-Path $env:PUBLISH_OUTPUT_DIR $exeName
-        Copy-Item -Path $sourceExe -Destination $destExe -Force
-        
-        # Hapus folder sementara
         Remove-Item -Recurse -Force $tempOutput -ErrorAction SilentlyContinue
         
-        Write-Host "✅ Build completed successfully."
-        Write-Host "   Output: $destExe"
-        Get-Item $destExe | Select-Object Name, Length, LastWriteTime
-        
-        # SIMPAN NAMA EXE KE ENVIRONMENT VARIABLE UNTUK STEP SELANJUTNYA
+        # Simpan nama exe untuk step selanjutnya
         echo "DETECTED_EXE_NAME=$exeName" >> $env:GITHUB_ENV
       shell: pwsh
       
@@ -148,7 +132,7 @@ jobs:
         & $isccExe $env:INSTALLER_SCRIPT "/O$outputDir" "/DSourceFolder=$sourceFolder"
         
         if ($LASTEXITCODE -ne 0) {
-            throw "❌ Inno Setup compilation failed with exit code $LASTEXITCODE"
+            throw " Inno Setup compilation failed with exit code $LASTEXITCODE"
         }
         
         Write-Host "✅ Installer compiled successfully!"
