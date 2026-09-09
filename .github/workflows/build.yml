@@ -1,4 +1,4 @@
-name: NGPB Launcher Build & Sign (Stable)
+name: NGPB Launcher Build & Sign (Final CMD Mode)
 
 on:
   push:
@@ -18,17 +18,15 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Debug Directory Structure (PENTING!)
+    - name: Debug Directory Structure
       run: |
         Write-Host "=== ROOT DIRECTORY ==="
         Get-ChildItem -Force
-        Write-Host "=== SEARCHING FOR CSPROJ ==="
         $csproj = Get-ChildItem -Recurse -Filter *.csproj | Select-Object -First 1
         if ($csproj) {
-            Write-Host "✅ Found csproj at: $($csproj.FullName)"
             echo "PROJECT_PATH=$($csproj.FullName)" >> $env:GITHUB_ENV
         } else {
-            throw "❌ FATAL: No .csproj file found in the repository!"
+            throw "❌ FATAL: No .csproj file found!"
         }
       shell: pwsh
         
@@ -40,15 +38,11 @@ jobs:
     - name: Restore Dependencies
       run: dotnet restore ${{ env.PROJECT_PATH }}
       
-    - name: Build Release (Simple & Stable)
+    - name: Build Release (Stable)
       run: |
         $tempOutput = Join-Path $PWD "temp-publish"
-        if (Test-Path $tempOutput) { Remove-Item -Recurse -Force $tempOutput }
         New-Item -ItemType Directory -Force -Path $tempOutput | Out-Null
         
-        Write-Host "🔨 Building project: ${{ env.PROJECT_PATH }}"
-        
-        # Build tanpa trimming untuk stabilitas maksimal
         dotnet publish ${{ env.PROJECT_PATH }} `
           -c Release `
           -r win-x64 `
@@ -57,25 +51,14 @@ jobs:
           -p:Optimize=true `
           -o $tempOutput
           
-        if ($LASTEXITCODE -ne 0) {
-            throw "❌ Build failed!"
-        }
+        if ($LASTEXITCODE -ne 0) { throw "❌ Build failed!" }
         
-        # Cari exe
         $exeFiles = Get-ChildItem $tempOutput -Filter *.exe -File
-        if ($exeFiles.Count -eq 0) {
-            Write-Host "=== Isi folder temp-publish ==="
-            Get-ChildItem $tempOutput
-            throw "❌ Tidak ada file .exe yang dihasilkan!"
-        }
+        if ($exeFiles.Count -eq 0) { throw "❌ No .exe found!" }
         
         $exeName = $exeFiles[0].Name
-        Write-Host "✅ Executable ditemukan: $exeName"
-        
-        # Pindahkan ke folder output utama
         New-Item -ItemType Directory -Force -Path $env:PUBLISH_OUTPUT_DIR | Out-Null
         Copy-Item "$tempOutput\$exeName" "$env:PUBLISH_OUTPUT_DIR\$exeName" -Force
-        
         echo "DETECTED_EXE_NAME=$exeName" >> $env:GITHUB_ENV
       shell: pwsh
       
@@ -83,46 +66,37 @@ jobs:
       run: choco install innosetup -y --no-progress
       shell: pwsh
 
-    - name: Compile Installer (PowerShell Native)
+    - name: Compile Installer (CMD Mode - Raw)
       run: |
-        # 1. Cari path ISCC.exe
-        $isccExe = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-        if (-not (Test-Path $isccExe)) {
-            $isccExe = Get-ChildItem "C:\Program Files*\Inno Setup *\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-        }
+        echo "=================================================="
+        echo "🔍 DIAGNOSTIC CHECK"
+        echo "=================================================="
+        echo "1. Checking ISCC location:"
+        where iscc
+        echo ""
+        echo "2. Checking Installer Script:"
+        dir installer\ngpb-installer.iss
+        echo ""
+        echo "3. Checking Source Folder (Build Output):"
+        dir build-output
+        echo ""
+        echo "=================================================="
+        echo "🔨 STARTING COMPILATION"
+        echo "=================================================="
         
-        Write-Host "Using ISCC at: $isccExe"
+        "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer\ngpb-installer.iss" /O"InstallerOutput" /DSourceFolder="build-output"
         
-        # 2. Validasi file .iss
-        $scriptPath = Join-Path $PWD $env:INSTALLER_SCRIPT
-        if (-not (Test-Path $scriptPath)) {
-            throw "FATAL: Installer script NOT FOUND at: $scriptPath"
-        }
+        if %ERRORLEVEL% neq 0 (
+          echo ""
+          echo "❌ COMPILATION FAILED! Check logs above for specific ISCC error."
+          exit /b 1
+        )
         
-        # 3. Siapkan folder
-        $sourceFolder = (Resolve-Path $env:PUBLISH_OUTPUT_DIR).Path
-        $outputDir = Join-Path $PWD "InstallerOutput"
-        New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
-        
-        Write-Host "🔨 Compiling installer..."
-        Write-Host "   Script : $scriptPath"
-        Write-Host "   Source : $sourceFolder"
-        Write-Host "   Output : $outputDir"
-        
-        # 4. Jalankan ISCC menggunakan string command langsung (lebih stabil untuk CLI tool lama)
-        $command = "& `"$isccExe`" `"$scriptPath`" /O`"$outputDir`" /DSourceFolder=`"$sourceFolder`""
-        Write-Host "Executing: $command"
-        
-        Invoke-Expression $command
-        $exitCode = $LASTEXITCODE
-        
-        if ($exitCode -ne 0) {
-            throw "❌ Inno Setup compilation failed with exit code $exitCode"
-        }
-        
-        Write-Host "✅ Installer compiled successfully!"
-        Get-ChildItem $outputDir -Filter *.exe | Select-Object Name, Length
-      shell: pwsh
+        echo ""
+        echo "✅ COMPILATION SUCCESS!"
+        echo "Checking output folder:"
+        dir InstallerOutput
+      shell: cmd
         
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
