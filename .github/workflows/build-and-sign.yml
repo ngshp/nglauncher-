@@ -7,10 +7,11 @@ on:
 
 env:
   DOTNET_VERSION: '8.0.x'
-  # PERBAIKAN: Sesuaikan dengan nama file .sln yang sebenarnya di repo Anda
   SOLUTION_PATH: 'nglauncher.sln' 
   PROJECT_PATH: 'src/NgpbLauncher.csproj'
   INSTALLER_SCRIPT: 'installer/ngpb-installer.iss'
+  # PERBAIKAN: Gunakan nama folder output yang unik agar tidak konflik dengan file exe
+  PUBLISH_OUTPUT_DIR: './build-output'
 
 jobs:
   build-and-package:
@@ -19,7 +20,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    # LANGKAH DIAGNOSTIK BARU: Cek isi folder sebelum build
     - name: Debug Directory Structure
       run: |
         Write-Host "=== Root Directory ==="
@@ -38,10 +38,33 @@ jobs:
       
     - name: Build Release
       run: |
-        dotnet publish ${{ env.PROJECT_PATH }} -c Release -r win-x64 --self-contained true `
-          -p:PublishTrimmed=true -p:EnableCompressionInSingleFile=true `
-          -p:DebugType=none -p:Optimize=true -p:PublishSingleFile=true `
-          -o ./publish
+        # Bersihkan folder output lama untuk mencegah file lock
+        if (Test-Path $env:PUBLISH_OUTPUT_DIR) { 
+          Remove-Item -Recurse -Force $env:PUBLISH_OUTPUT_DIR 
+        }
+        
+        dotnet publish ${{ env.PROJECT_PATH }} `
+          -c Release `
+          -r win-x64 `
+          --self-contained true `
+          -p:PublishSingleFile=true `
+          -p:EnableCompressionInSingleFile=true `
+          -p:PublishTrimmed=true `
+          -p:DebugType=none `
+          -p:Optimize=true `
+          -p:UseAppHost=false `
+          -o $env:PUBLISH_OUTPUT_DIR
+      shell: pwsh
+      
+    - name: Verify Build Output
+      run: |
+        Write-Host "Checking build output..."
+        Get-ChildItem $env:PUBLISH_OUTPUT_DIR | Select-Object Name, Length
+        if (-not (Test-Path "$env:PUBLISH_OUTPUT_DIR/NgpbLauncher.exe")) {
+          throw "FATAL: NgpbLauncher.exe NOT FOUND in build output!"
+        }
+        Write-Host "✅ Build verified successfully."
+      shell: pwsh
       
     - name: Prepare Signing Certificate
       env:
@@ -59,13 +82,13 @@ jobs:
       run: |
         signtool sign /f $env:CERT_PATH /p $env:SIGNING_PASSWORD `
           /tr http://timestamp.digicert.com /td sha256 /fd sha256 /v `
-          .\publish\NgpbLauncher.exe
+          "$env:PUBLISH_OUTPUT_DIR\NgpbLauncher.exe"
           
     - name: Compile Installer
       uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
       with:
         path: ${{ env.INSTALLER_SCRIPT }}
-        options: '/O.\InstallerOutput /DSourceFolder=publish'
+        options: "/O.\InstallerOutput /DSourceFolder=$env:PUBLISH_OUTPUT_DIR"
         
     - name: Code Sign Installer
       env:
@@ -82,5 +105,5 @@ jobs:
       with:
         name: NGPB-Launcher-v1.2.0
         path: |
-          ./publish/NgpbLauncher.exe
+          ${{ env.PUBLISH_OUTPUT_DIR }}/NgpbLauncher.exe
           ./InstallerOutput/*.exe
