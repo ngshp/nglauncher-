@@ -7,7 +7,6 @@ on:
 
 env:
   DOTNET_VERSION: '8.0.x'
-  SOLUTION_PATH: 'nglauncher.sln' 
   PROJECT_PATH: 'src/NgpbLauncher.csproj'
   INSTALLER_SCRIPT: 'installer/ngpb-installer.iss'
   PUBLISH_OUTPUT_DIR: './build-output'
@@ -32,9 +31,8 @@ jobs:
         dotnet-version: ${{ env.DOTNET_VERSION }}
         
     - name: Restore Dependencies
-      run: dotnet restore ${{ env.SOLUTION_PATH }}
+      run: dotnet restore ${{ env.PROJECT_PATH }}
       
-    # PERBAIKAN FINAL STEP 5: Publish tanpa SingleFile dulu, lalu kompres manual
     - name: Build Release (Fixed File Lock)
       run: |
         # Bersihkan output folder lama
@@ -47,7 +45,7 @@ jobs:
         $tempOutput = Join-Path $PWD "temp-publish"
         if (Test-Path $tempOutput) { Remove-Item -Recurse -Force $tempOutput -ErrorAction SilentlyContinue }
         
-        Write-Host "🔨 Stage 1: Publishing without SingleFile..."
+        Write-Host " Stage 1: Publishing without SingleFile..."
         dotnet publish $env:PROJECT_PATH `
           -c Release `
           -r win-x64 `
