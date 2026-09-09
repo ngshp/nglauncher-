@@ -12,16 +12,15 @@ namespace NgpbLauncher
     public static class Program
     {
         [STAThread]
-        public static void Main()
+        // WAJIB tambahkan string[] args agar kompatibel dengan PublishTrimmed + SelfContained
+        public static void Main(string[] args) 
         {
             try
             {
                 // LAYER 0: Native Protection (Anti-Debug & DEP)
-                // Dijalankan paling awal sebelum WPF diinisialisasi
                 NativeProtection.ApplyNativeProtections();
 
                 // Cek Status Ban Permanen (HWID & IP)
-                // Jika terdeteksi banned, aplikasi langsung mati tanpa menampilkan UI
                 if (SecurityBootManager.IsPermanentlyBanned())
                 {
                     MessageBox.Show(
@@ -35,11 +34,12 @@ namespace NgpbLauncher
                     Environment.Exit(1);
                 }
 
-                // Inisialisasi Aplikasi WPF
-                var app = new Application();
+                // Inisialisasi Aplikasi WPF dengan App.xaml
+                // Menggunakan App() memastikan resource dictionary & global handlers terbaca
+                var app = new App(); 
+                app.InitializeComponent(); 
                 
-                // Menjalankan SecureBootWindow sebagai jendela pertama (bukan MainWindow)
-                // Ini memastikan Layer 1 & 2 validasi keamanan berjalan dulu
+                // Menjalankan SecureBootWindow sebagai jendela pertama
                 app.Run(new SecureBootWindow());
             }
             catch (Exception ex)
