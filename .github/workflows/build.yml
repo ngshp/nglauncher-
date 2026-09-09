@@ -1,4 +1,4 @@
-name: NGPB Launcher Build & Sign
+name: NGPB Launcher Build & Sign (Stable)
 
 on:
   push:
@@ -7,7 +7,8 @@ on:
 
 env:
   DOTNET_VERSION: '8.0.x'
-  PROJECT_PATH: 'src/NgpbLauncher.csproj'
+  # Kita biarkan kosong dulu, nanti diisi oleh script
+  PROJECT_PATH: '' 
   INSTALLER_SCRIPT: 'installer/ngpb-installer.iss'
   PUBLISH_OUTPUT_DIR: './build-output'
 
@@ -18,6 +19,20 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    - name: Debug Directory Structure (PENTING!)
+      run: |
+        Write-Host "=== ROOT DIRECTORY ==="
+        Get-ChildItem -Force
+        Write-Host "=== SEARCHING FOR CSPROJ ==="
+        $csproj = Get-ChildItem -Recurse -Filter *.csproj | Select-Object -First 1
+        if ($csproj) {
+            Write-Host "✅ Found csproj at: $($csproj.FullName)"
+            echo "PROJECT_PATH=$($csproj.FullName)" >> $env:GITHUB_ENV
+        } else {
+            throw "❌ FATAL: No .csproj file found in the repository!"
+        }
+      shell: pwsh
+        
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
@@ -26,138 +41,68 @@ jobs:
     - name: Restore Dependencies
       run: dotnet restore ${{ env.PROJECT_PATH }}
       
-    - name: Build Release (Stable No-Trim)
+    - name: Build Release (Simple & Stable)
       run: |
-        # Bersihkan output folder lama
-        if (Test-Path $env:PUBLISH_OUTPUT_DIR) { 
-          Remove-Item -Recurse -Force $env:PUBLISH_OUTPUT_DIR -ErrorAction SilentlyContinue
-        }
-        New-Item -ItemType Directory -Force -Path $env:PUBLISH_OUTPUT_DIR | Out-Null
-        
         $tempOutput = Join-Path $PWD "temp-publish"
-        if (Test-Path $tempOutput) { Remove-Item -Recurse -Force $tempOutput -ErrorAction SilentlyContinue }
+        if (Test-Path $tempOutput) { Remove-Item -Recurse -Force $tempOutput }
+        New-Item -ItemType Directory -Force -Path $tempOutput | Out-Null
         
-        Write-Host "🔨 Publishing WITHOUT trimming for stability..."
+        Write-Host "🔨 Building project: ${{ env.PROJECT_PATH }}"
         
-        dotnet publish $env:PROJECT_PATH `
+        # Build tanpa trimming untuk stabilitas maksimal
+        dotnet publish ${{ env.PROJECT_PATH }} `
           -c Release `
           -r win-x64 `
           --self-contained true `
-          --no-incremental `
           -p:DebugType=none `
           -p:Optimize=true `
-          -p:EnableCompressionInSingleFile=false `
           -o $tempOutput
           
         if ($LASTEXITCODE -ne 0) {
-            throw "❌ Publish failed with exit code $LASTEXITCODE"
+            throw "❌ Build failed!"
         }
         
-        # Deteksi exe otomatis
+        # Cari exe
         $exeFiles = Get-ChildItem $tempOutput -Filter *.exe -File
         if ($exeFiles.Count -eq 0) {
-            Write-Host "=== Contents of temp-publish ==="
-            Get-ChildItem $tempOutput | Select-Object Name, Length
-            throw "FATAL: No .exe files found!"
+            Write-Host "=== Isi folder temp-publish ==="
+            Get-ChildItem $tempOutput
+            throw "❌ Tidak ada file .exe yang dihasilkan!"
         }
         
-        $sourceExe = $exeFiles[0].FullName
         $exeName = $exeFiles[0].Name
+        Write-Host "✅ Executable ditemukan: $exeName"
         
-        Write-Host "✅ Detected executable: $exeName"
-        Copy-Item -Path $sourceExe -Destination "$env:PUBLISH_OUTPUT_DIR\$exeName" -Force
-        Remove-Item -Recurse -Force $tempOutput -ErrorAction SilentlyContinue
+        # Pindahkan ke folder output utama
+        New-Item -ItemType Directory -Force -Path $env:PUBLISH_OUTPUT_DIR | Out-Null
+        Copy-Item "$tempOutput\$exeName" "$env:PUBLISH_OUTPUT_DIR\$exeName" -Force
         
         echo "DETECTED_EXE_NAME=$exeName" >> $env:GITHUB_ENV
       shell: pwsh
       
-    - name: Verify Build Output
-      run: |
-        Write-Host "Checking build output for: ${{ env.DETECTED_EXE_NAME }}"
-        Get-ChildItem $env:PUBLISH_OUTPUT_DIR | Select-Object Name, Length
-        if (-not (Test-Path "$env:PUBLISH_OUTPUT_DIR/${{ env.DETECTED_EXE_NAME }}")) {
-          throw "FATAL: ${{ env.DETECTED_EXE_NAME }} NOT FOUND in build output!"
-        }
-        Write-Host "✅ Build verified successfully."
-      shell: pwsh
-      
-    - name: Prepare Signing Certificate
-      env:
-        SIGNING_CERT_B64: ${{ secrets.SIGNING_CERT_B64 }}
-        CERT_PATH: '${{ runner.temp }}/ngpb-cert.pfx'
-      run: |
-        $certBytes = [Convert]::FromBase64String($env:SIGNING_CERT_B64)
-        [IO.File]::WriteAllBytes($env:CERT_PATH, $certBytes)
-        Write-Host "Certificate prepared at $env:CERT_PATH"
-      shell: pwsh
-        
-    - name: Code Sign Launcher
-      env:
-        CERT_PATH: '${{ runner.temp }}/ngpb-cert.pfx'
-        SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
-      run: |
-        signtool sign /f $env:CERT_PATH /p $env:SIGNING_PASSWORD `
-          /tr http://timestamp.digicert.com /td sha256 /fd sha256 /v `
-          "$env:PUBLISH_OUTPUT_DIR\${{ env.DETECTED_EXE_NAME }}"
-          
     - name: Install Inno Setup
-      run: |
-        choco install innosetup -y --no-progress
-        Write-Host "Inno Setup installed successfully."
+      run: choco install innosetup -y --no-progress
       shell: pwsh
 
     - name: Compile Installer
       run: |
-        # Path ISCC setelah install via Chocolatey
         $isccExe = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-        
-        if (-not (Test-Path $isccExe)) {
-            $isccExe = Get-ChildItem "C:\Program Files*\Inno Setup *\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
-        }
-        
-        if (-not $isccExe) {
-            throw "FATAL: ISCC.exe still not found after installation!"
-        }
-        
         $sourceFolder = (Resolve-Path $env:PUBLISH_OUTPUT_DIR).Path
         $outputDir = Join-Path $PWD "InstallerOutput"
         New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
         
         Write-Host "🔨 Compiling installer..."
-        Write-Host "   Source Folder : $sourceFolder"
-        Write-Host "   Output Folder : $outputDir"
-        Write-Host "   Using ISCC    : $isccExe"
-        
         & $isccExe $env:INSTALLER_SCRIPT "/O$outputDir" "/DSourceFolder=$sourceFolder"
         
         if ($LASTEXITCODE -ne 0) {
-            throw "❌ Inno Setup compilation failed with exit code $LASTEXITCODE"
+            throw "❌ Inno Setup failed!"
         }
-        
-        Write-Host "✅ Installer compiled successfully!"
-        Get-ChildItem $outputDir -Filter *.exe | Select-Object Name, Length
       shell: pwsh
         
-    - name: Code Sign Installer
-      env:
-        CERT_PATH: '${{ runner.temp }}/ngpb-cert.pfx'
-        SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
-      run: |
-        $installerFiles = Get-ChildItem .\InstallerOutput\*.exe
-        if ($installerFiles.Count -eq 0) {
-            throw "No installer .exe files found in InstallerOutput!"
-        }
-        
-        $installerFiles | ForEach-Object {
-            Write-Host "Signing: $($_.FullName)"
-            signtool sign /f $env:CERT_PATH /p $env:SIGNING_PASSWORD `
-              /tr http://timestamp.digicert.com /td sha256 /fd sha256 /v $_.FullName
-        }
-
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: NGPB-Launcher-v1.2.0
+        name: NGPB-Launcher-Final
         path: |
-          ${{ env.PUBLISH_OUTPUT_DIR }}/${{ env.DETECTED_EXE_NAME }}
+          ${{ env.PUBLISH_OUTPUT_DIR }}/*.exe
           ./InstallerOutput/*.exe
