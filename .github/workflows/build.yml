@@ -83,9 +83,9 @@ jobs:
       run: choco install innosetup -y --no-progress
       shell: pwsh
 
-    - name: Compile Installer (Verbose)
+    - name: Compile Installer (Final Fix)
       run: |
-        # Cari path ISCC.exe
+        # 1. Cari path ISCC.exe
         $isccExe = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
         if (-not (Test-Path $isccExe)) {
             $isccExe = Get-ChildItem "C:\Program Files*\Inno Setup *\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
@@ -93,27 +93,40 @@ jobs:
         
         Write-Host "Using ISCC at: $isccExe"
         
-        # Pastikan file .iss ada
-        if (-not (Test-Path $env:INSTALLER_SCRIPT)) {
-            throw "FATAL: Installer script not found at: $env:INSTALLER_SCRIPT"
+        # 2. Validasi file .iss menggunakan path absolut
+        $scriptPath = Join-Path $PWD $env:INSTALLER_SCRIPT
+        Write-Host "Checking for script at: $scriptPath"
+        
+        if (-not (Test-Path $scriptPath)) {
+            Write-Host "=== ROOT DIRECTORY CONTENTS ==="
+            Get-ChildItem -Force
+            throw "FATAL: Installer script NOT FOUND at: $scriptPath"
         }
         
+        # 3. Siapkan folder output dan source
         $sourceFolder = (Resolve-Path $env:PUBLISH_OUTPUT_DIR).Path
         $outputDir = Join-Path $PWD "InstallerOutput"
         New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
         
         Write-Host "🔨 Compiling installer..."
-        Write-Host "   Script Path : $env:INSTALLER_SCRIPT"
+        Write-Host "   Script       : $scriptPath"
         Write-Host "   Source Folder: $sourceFolder"
         Write-Host "   Output Dir   : $outputDir"
         
-        # Jalankan ISCC dan tangkap outputnya
-        $output = & $isccExe $env:INSTALLER_SCRIPT "/O$outputDir" "/DSourceFolder=$sourceFolder" 2>&1
+        # 4. Jalankan ISCC dengan parameter yang sangat eksplisit
+        $args = @(
+            "`"$scriptPath`"", 
+            "/O`"$outputDir`"", 
+            "/DSourceFolder=`"$sourceFolder`""
+        )
+        
+        Write-Host "Command: & $isccExe $args"
+        $output = & $isccExe @args 2>&1
         Write-Host $output
         
         if ($LASTEXITCODE -ne 0) {
             Write-Host "=== INNO SETUP ERROR LOG ==="
-            $output | Select-String -Pattern "error|warning|fatal" -Context 0,2
+            $output | Select-String -Pattern "error|warning|fatal|line" -Context 0,2
             throw "❌ Inno Setup compilation failed with exit code $LASTEXITCODE"
         }
         
